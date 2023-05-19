@@ -2,6 +2,7 @@ import time
 import random
 import logging
 from src.maze import Maze
+import numpy as np
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -216,3 +217,98 @@ class DepthFirstBacktracker(Solver):
 
         logging.debug('Class DepthFirstBacktracker leaving solve')
         return path
+
+
+def get_reward(current_state, action, next_state, maze):
+    x, y = current_state
+    nx, ny = next_state
+    if 0 > nx or nx >= maze.num_rows and 0 > ny or ny >= maze.num_cols \
+            or maze.grid[x][y].is_walls_between(maze.grid[nx][ny]):
+        reward = -1
+    elif next_state == maze.exit_coor:
+        reward = 100
+    else:
+        reward = -0.1
+    return reward
+
+
+def get_valid_actions(maze, state, actions):
+    r, c = maze.num_rows, maze.num_cols
+    valid_actions = []
+    for i in range(4):
+        dx, dy = actions[i]
+        nx = state[0] + dx
+        ny = state[1] + dy
+        if 0 <= nx < r and 0 <= ny < c \
+                and not maze.grid[state[0]][state[1]].is_walls_between(maze.grid[nx][ny]):
+            valid_actions.append(actions[i])
+
+    return valid_actions
+
+
+def q_learning_path(maze, q_table):
+    cost = 0
+    actions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+    state = maze.entry_coor
+    path = [state]
+    while state != maze.exit_coor and cost <= maze.grid_size:
+        valid_actions = get_valid_actions(maze, state, actions)
+        if not valid_actions:
+            break
+
+        action = valid_actions[np.argmax([q_table[state[0], state[1], actions.index(action)] for action in valid_actions])]
+        state = tuple(np.sum((state, action), axis=0))
+        cost += 1
+        path.append(state)
+
+    return path, cost
+
+
+def q_learning(maze, num_episodes, learning_rate, discount_factor, exp_rate):
+    # Q table : # of state * # of action
+    steps = 2000
+    actions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+    q_table = np.zeros((maze.num_rows, maze.num_cols, len(actions)))
+    for episode in range(num_episodes):
+        state = maze.entry_coor
+        for step in range(steps):
+            x, y = state
+            epsilon = random.random()
+            if epsilon < exp_rate:
+                action = random.choice(actions)
+            else:
+                action = actions[np.argmax([q_table[x, y]])]
+
+            if action in get_valid_actions(maze, state, actions):
+                next_state = tuple(np.sum((state, action), axis=0))
+            else:
+                next_state = state
+            r = get_reward(state, action, next_state, maze)
+            q_table[x, y, actions.index(action)] += learning_rate * (r + discount_factor * np.max(q_table[next_state[0], next_state[1]]) - q_table[x, y, actions.index(action)])
+
+            if next_state == maze.exit_coor:
+                break
+
+            state = next_state
+
+        exp_rate *= 0.98
+    return q_table
+
+
+class QLearning(Solver):
+    def __init__(self, maze, quiet_mode=False, neighbor_method="fancy"):
+        logging.debug('Class Q Learning ctor called')
+
+        super().__init__(maze, neighbor_method, quiet_mode)
+        self.name = "Q Learning"
+
+    def solve(self):
+        learning_rate = 0.3
+        num_episodes = 1000
+        discount_factor = 0.99
+        exp_rate = 0.9
+
+        q_table = q_learning(self.maze, num_episodes, learning_rate, discount_factor, exp_rate)
+        path, cost = q_learning_path(self.maze, q_table)
+
+        return [(p, False) for p in path]
